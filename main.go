@@ -39,9 +39,9 @@ func logRequest(next http.Handler) http.Handler {
 	})
 }
 
-// Ascolta su uri /testme ed accetta in ingresso
-// forceHttpCode: se si vuole un RC != 200. default: 200
-// delayParam: se se vuole che prima di evadere la richiesta attenda il tempo espresso in ms. default: 0
+// Listen on URI /testme and accept incoming requests
+// forceHttpCode: if you want a status code other than 200. Default: 200
+// delayParam: if you want the request to wait for the specified time in ms before processing. Default: 0
 func testmeHandler(w http.ResponseWriter, r *http.Request) {
 	delayParam := r.URL.Query().Get("delay")
 	forceHttpCodeParam := r.URL.Query().Get("forceHttpCode")
