@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -13,6 +19,24 @@ import (
 )
 
 func main() {
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+
+		for {
+			select {
+			case <-t.C:
+				secret, err := readSecret()
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+
+				fmt.Println(secret.Data)
+				log.Println("Loggata la lettura del segreto 'mysecret' dall'utente 'utente' alle ore", time.Now())
+			}
+		}
+	}()
+
 	r := mux.NewRouter()
 	r.HandleFunc("/testme", testmeHandler).Methods("GET")
 	r.HandleFunc("/timeout", timeoutHandler).Methods("GET")
@@ -29,20 +53,8 @@ func main() {
 	}
 }
 
-func logRequest(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		startTime := time.Now()
-		next.ServeHTTP(w, r)
-		endTime := time.Now()
-		elapsed := endTime.Sub(startTime)
-		log.Printf("[%s] %s %s - %v\n", r.Method, r.URL.Path, r.RemoteAddr, elapsed)
-	})
-}
-
-// Listen on URI /testme and accept incoming requests
-// forceHttpCode: if you want a status code other than 200. Default: 200
-// delayParam: if you want the request to wait for the specified time in ms before processing. Default: 0
 func testmeHandler(w http.ResponseWriter, r *http.Request) {
+
 	delayParam := r.URL.Query().Get("delay")
 	forceHttpCodeParam := r.URL.Query().Get("forceHttpCode")
 
@@ -76,9 +88,9 @@ func testmeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	xRoutedBy := r.Header.Get("x-routed-by")
-	whoAmI := os.Getenv("WHO_AM_I")
-	nodeName := os.Getenv("NODE_NAME")
-	namespace := os.Getenv("NAMESPACE")
+	whoAmI := r.Header.Get("WHO_AM_I")
+	nodeName := r.Header.Get("NODE_NAME")
+	namespace := r.Header.Get("NAMESPACE")
 
 	createResponse(delay, forceHttpCode, xRoutedBy, whoAmI, nodeName, namespace, "testme", w)
 }
@@ -96,6 +108,41 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 // readiness probe
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
 	probeHandler(w, r, "readiness")
+}
+
+func logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startTime := time.Now()
+		next.ServeHTTP(w, r)
+		endTime := time.Now()
+		elapsed := endTime.Sub(startTime)
+		log.Printf("[%s] %s %s - %v\n", r.Method, r.URL.Path, r.RemoteAddr, elapsed)
+	})
+}
+
+func readSecret() (*corev1.Secret, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	namespace, err := getNamespace()
+	if err != nil {
+		return nil, err
+	}
+
+	// Usa il namespace ottenuto per accedere ai segreti nel namespace corrente
+	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.Background(), "my-secrets", metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return secret, nil
 }
 
 func probeHandler(w http.ResponseWriter, r *http.Request, probeType string) {
@@ -152,4 +199,15 @@ func createResponse(delay int64, forceHttpCode int, xRoutedBy string, whoAmI str
 	if err != nil {
 		return
 	}
+}
+
+func getNamespace() (string, error) {
+	saPath := filepath.Join("/var/run/secrets/kubernetes.io/serviceaccount", "namespace")
+
+	namespace, err := os.ReadFile(saPath)
+	if err != nil {
+		return "", err
+	}
+
+	return string(namespace), nil
 }
