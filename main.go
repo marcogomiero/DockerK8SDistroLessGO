@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
-	corev1 "k8s.io/api/core/v1"
+	_ "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -30,9 +32,18 @@ func main() {
 					fmt.Println(err)
 					continue
 				}
+				fmt.Println("Dati decodificati:", secret)
 
-				fmt.Println(secret.Data)
-				log.Println("Loggata la lettura del segreto 'mysecret' dall'utente 'utente' alle ore", time.Now())
+				username, usernameExists := secret["username"]
+				password, passwordExists := secret["password"]
+
+				if usernameExists && passwordExists {
+					fmt.Println("Username:", username)
+					fmt.Println("Password:", password)
+				} else {
+					fmt.Println("Chiavi mancanti nel secret.")
+				}
+
 			}
 		}
 	}()
@@ -46,7 +57,14 @@ func main() {
 
 	http.Handle("/", r)
 
+	fmt.Println(`
+	  ,_,   
+	 {O,o}
+	 /)__)
+	=="="==`)
+
 	fmt.Println("Server avviato su :8080")
+	fmt.Println("v.0.3.7-go-dev")
 	err := http.ListenAndServe(":8080", logRequest(r))
 	if err != nil {
 		return
@@ -88,11 +106,10 @@ func testmeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	xRoutedBy := r.Header.Get("x-routed-by")
-	whoAmI := r.Header.Get("WHO_AM_I")
-	nodeName := r.Header.Get("NODE_NAME")
-	namespace := r.Header.Get("NAMESPACE")
+	whoAmI := os.Getenv("WHO_AM_I")
+	nodeName := os.Getenv("NODE_NAME")
 
-	createResponse(delay, forceHttpCode, xRoutedBy, whoAmI, nodeName, namespace, "testme", w)
+	createResponse(delay, forceHttpCode, xRoutedBy, whoAmI, nodeName, w)
 }
 
 func timeoutHandler(w http.ResponseWriter, _ *http.Request) {
@@ -120,29 +137,34 @@ func logRequest(next http.Handler) http.Handler {
 	})
 }
 
-func readSecret() (*corev1.Secret, error) {
+func readSecret() (map[string]string, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, err
 	}
-
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
 	}
-
 	namespace, err := getNamespace()
 	if err != nil {
 		return nil, err
 	}
-
-	// Usa il namespace ottenuto per accedere ai segreti nel namespace corrente
 	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.Background(), "my-secrets", metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	return secret, nil
+	// Decodifica i dati del secret dalla codifica base64
+	decodedData := make(map[string]string)
+	for key, value := range secret.Data {
+		decodedValue, err := base64.StdEncoding.DecodeString(string(value))
+		if err != nil {
+			return nil, err
+		}
+		decodedData[key] = string(decodedValue)
+	}
+	return decodedData, nil
 }
 
 func probeHandler(w http.ResponseWriter, r *http.Request, probeType string) {
@@ -178,25 +200,29 @@ func probeHandler(w http.ResponseWriter, r *http.Request, probeType string) {
 	}
 }
 
-func createResponse(delay int64, forceHttpCode int, xRoutedBy string, whoAmI string, nodeName string, namespace string, endpoint string, w http.ResponseWriter) {
+func createResponse(delay int64, forceHttpCode int, xRoutedBy string, whoAmI string, nodeName string, w http.ResponseWriter) {
+	goVersion := runtime.Version()
+
+	namespace, err := getNamespace()
+	if err != nil {
+		fmt.Println("Errore durante il recupero del namespace:", err)
+		namespace = "unknown"
+	}
+
+	hostname, _ := os.Hostname()
+
 	if delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Millisecond)
 	}
 
-	response := fmt.Sprintf(`{
-  "message": "Hello World",
-  "RC": "%d",
-  "HEADER": "%s",
-  "WHO_AM_I": "%s",
-  "NODE_NAME": "%s",
-  "NAMESPACE": "%s",
-  "ENDPOINT": "%s"
-}`, forceHttpCode, xRoutedBy, whoAmI, nodeName, namespace, endpoint)
+	response := fmt.Sprintf(`{"message":"Hello World","RC":%d,"HEADER":"%s","WHO_AM_I":"%s","NODE_NAME":"%s","K8s NS":"%s","HOSTNAME":"%s","FRAMEWORK":"GoLand %s","ENDPOINT":"/testme"}`,
+		forceHttpCode, xRoutedBy, whoAmI, nodeName, namespace, hostname, goVersion)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, err := w.Write([]byte(response))
+	_, err = w.Write([]byte(response))
 	if err != nil {
+		fmt.Println("Errore durante la scrittura della risposta:", err)
 		return
 	}
 }
