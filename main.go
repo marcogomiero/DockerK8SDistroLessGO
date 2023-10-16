@@ -21,8 +21,34 @@ import (
 )
 
 func main() {
+	fmt.Println("Server avviato su :8080")
+	fmt.Println("v.0.3.5-go-stable")
+	fmt.Println(`
+	  ,_,   
+	 {O,o}
+	 /)__)
+	=="="==`)
+
+	// Read secret on startup
+	secret, err := readSecret()
+	if err != nil {
+		fmt.Println("Errore durante la lettura del secret:", err)
+	} else {
+
+		username, usernameExists := secret["username"]
+		password, passwordExists := secret["password"]
+
+		if usernameExists && passwordExists {
+			fmt.Println("Username:", username)
+			fmt.Println("Password:", password)
+		} else {
+			fmt.Println("Chiavi mancanti nel secret.")
+		}
+	}
+
+	//schedule for refresh every 5min
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(300 * time.Second)
 
 		for {
 			select {
@@ -57,15 +83,7 @@ func main() {
 
 	http.Handle("/", r)
 
-	fmt.Println(`
-	  ,_,   
-	 {O,o}
-	 /)__)
-	=="="==`)
-
-	fmt.Println("Server avviato su :8080")
-	fmt.Println("v.0.3.7-go-dev")
-	err := http.ListenAndServe(":8080", logRequest(r))
+	err = http.ListenAndServe(":8080", logRequest(r))
 	if err != nil {
 		return
 	}
